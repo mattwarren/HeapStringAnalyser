@@ -151,8 +151,12 @@ namespace HeapStringAnalyser
             // This is the data needed to request the dac from the symbol server:
             ModuleInfo dacInfo = version.DacInfo;
             // Location: <TEMP>\symbols\mscordacwks_amd64_amd64_4.0.30319.18444.dll\52717f9a96b000\mscordacwks_amd64_amd64_4.0.30319.18444.dll
-            var dacLocation = string.Format(@"C:\Users\warma11\AppData\Local\Temp\symbols\{0}\{1:x}{2:x}\{3}",
-                                            dacInfo.FileName, dacInfo.TimeStamp, dacInfo.FileSize, dacInfo.FileName);
+            var dacLocation = string.Format(@"{0}\symbols\{1}\{2:x}{3:x}\{4}",
+                                            Path.GetTempPath(), 
+                                            dacInfo.FileName, 
+                                            dacInfo.TimeStamp, 
+                                            dacInfo.FileSize,
+                                            dacInfo.FileName);
 
             if (File.Exists(dacLocation))
             {
@@ -162,6 +166,9 @@ namespace HeapStringAnalyser
             else
             {
                 Console.WriteLine("\nUnable to find local copy of the dac, it will now be downloaded from the Microsoft Symbol Server");
+                Console.WriteLine("Press <ENTER> if you are okay with this, if not you can just type Ctrl-C to exit");
+                Console.ReadLine();
+
                 string downloadLocation = version.TryDownloadDac();
                 Console.WriteLine("Downloaded a copy of the dac to:\n" + downloadLocation);
                 return downloadLocation;
