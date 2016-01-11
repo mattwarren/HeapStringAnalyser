@@ -13,6 +13,9 @@ namespace HeapStringAnalyser
     // see http://blogs.msdn.com/b/kirillosenkov/archive/2014/07/05/get-most-duplicated-strings-from-a-heap-dump-using-clrmd.aspx
     class Program
     {
+        // See "Some simple starter measurements" on http://codeblog.jonskeet.uk/2011/04/05/of-memory-and-strings/
+        private static ulong HeaderSize = (ulong)(Environment.Is64BitProcess ? 26 : 14);
+
         static void Main(string[] args)
         {
             var crashDump = @"C:\Share\Ninject - MVC App.DMP";
@@ -54,7 +57,6 @@ namespace HeapStringAnalyser
                 ulong totalStringObjectSize = 0, stringObjectCounter = 0, byteArraySize = 0;
                 ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0;
                 ulong compressedStringSize = 0, uncompressedStringSize = 0;
-                
                 foreach (var obj in heap.EnumerateObjectAddresses())
                 {
                     ClrType type = heap.GetObjectType(obj);
@@ -67,6 +69,8 @@ namespace HeapStringAnalyser
                     var rawBytes = Encoding.Unicode.GetBytes(text);
                     totalStringObjectSize += type.GetSize(obj);
                     byteArraySize += (ulong)rawBytes.Length;
+
+                    VerifyStringObjectSize(runtime, type, obj, text);
 
                     byte[] textAsBytes = null;
                     if (IsASCII(text, out textAsBytes))
@@ -92,7 +96,7 @@ namespace HeapStringAnalyser
 
                 Console.WriteLine("Overall {0:N0} \"System.String\" objects take up {1:N0} bytes", stringObjectCounter, totalStringObjectSize);
                 Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes", byteArraySize);
-                Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:N} bytes per object)\n",
+                Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:0.##} bytes per object)\n",
                                     totalStringObjectSize - byteArraySize, (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
 
                 Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
@@ -221,6 +225,37 @@ namespace HeapStringAnalyser
                 Console.WriteLine("Heap {0,2}: {1,12:n0} bytes", item.Heap, item.Size);
             }
             Console.WriteLine();
+        }
+
+        private static void VerifyStringObjectSize(ClrRuntime runtime, ClrType type, ulong obj, string text)
+        {
+            var objSize = type.GetSize(obj);
+            var objAsHex = obj.ToString("x");
+            var rawBytes = Encoding.Unicode.GetBytes(text);
+
+            if (runtime.ClrInfo.Version.Major == 2)
+            {
+                // This only works in .NET 2.0, the "m_array_Length" field was removed in .NET 4.0
+                var arrayLength = (int)type.GetFieldByName("m_arrayLength").GetValue(obj);
+                var stringLength = (int)type.GetFieldByName("m_stringLength").GetValue(obj);
+                
+                var calculatedSize = (((ulong)arrayLength - 1) * 2) + HeaderSize;
+                if (objSize != calculatedSize)
+                {
+                    Console.WriteLine("Object Size Mismatch: arrayLength: {0,4}, stringLength: {1,4}, Object Size: {2,4}, Object: {3} -> \n\"{4}\"",
+                                      arrayLength, stringLength, objSize, objAsHex, text);
+                }
+            }
+            else
+            {
+                // In .NET 4.0 we can do a more normal check, i.e. ("object size" - "raw byte array length") should equal the expected header size
+                var theRest = objSize - (ulong)rawBytes.Length;
+                if (theRest != HeaderSize)
+                {
+                    Console.WriteLine("Object Size Mismatch: Raw Bytes Length: {0,4}, Object Size: {1,4}, Object: {2} -> \n\"{3}\"",
+                                      rawBytes.Length, objSize, objAsHex, text);
+                }
+            }
         }
     }
 }
