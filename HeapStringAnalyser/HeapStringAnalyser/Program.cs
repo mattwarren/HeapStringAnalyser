@@ -18,8 +18,24 @@ namespace HeapStringAnalyser
 
         static void Main(string[] args)
         {
-            var crashDump = @"C:\Share\Ninject - MVC App.DMP";
-            using (DataTarget target = DataTarget.LoadCrashDump(crashDump))
+            if (args.Length < 1)
+            {
+                Console.WriteLine("Usage:\n  HeapStringAnalyser.exe <Dump File>\n");
+                return;
+            }
+
+            if (File.Exists(args[0]) == false)
+            {
+                Console.WriteLine("{0} - does not exist!", args[0]);
+                return;
+            }
+
+            ExamineProcessHeap(args);
+        }
+
+        private static void ExamineProcessHeap(string[] args)
+        {
+            using (DataTarget target = DataTarget.LoadCrashDump(args[0]))
             {
                 string dacLocation = null;
                 foreach (ClrInfo version in target.ClrVersions)
@@ -45,7 +61,7 @@ namespace HeapStringAnalyser
 
                 var heap = runtime.GetHeap();
 
-                PrintMemoryRegionInfo(runtime);
+                //PrintMemoryRegionInfo(runtime);
                 PrintGCHeapInfo(heap);
 
                 if (!heap.CanWalkHeap)
@@ -72,6 +88,7 @@ namespace HeapStringAnalyser
 
                     VerifyStringObjectSize(runtime, type, obj, text);
 
+                    // Try each encoding in order, so we find the most-compact encoding that the text would fit in
                     byte[] textAsBytes = null;
                     if (IsASCII(text, out textAsBytes))
                     {
@@ -82,6 +99,8 @@ namespace HeapStringAnalyser
                         else
                             Console.WriteLine("ERROR: \"{0}\" is ASCII but can't be encoded as ISO-8859-1 (Latin-1)", text);
                     }
+                    // From http://stackoverflow.com/questions/7048745/what-is-the-difference-between-utf-8-and-iso-8859-1
+                    // "ISO 8859-1 is a single-byte encoding that can represent the first 256 Unicode characters"
                     else if (IsIsoLatin1(text, out textAsBytes))
                     {
                         isoStringSize += (ulong)rawBytes.Length;
@@ -94,20 +113,22 @@ namespace HeapStringAnalyser
                     }
                 }
 
-                Console.WriteLine("Overall {0:N0} \"System.String\" objects take up {1:N0} bytes", stringObjectCounter, totalStringObjectSize);
-                Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes", byteArraySize);
+                Console.WriteLine("Overall {0:N0} \"System.String\" objects take up {1:N0} bytes ({2:N2} MB)",
+                                  stringObjectCounter, totalStringObjectSize, totalStringObjectSize / 1024.0 / 1024.0);
+                Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes ({1:N2} MB)",
+                                  byteArraySize, byteArraySize / 1024.0 / 1024.0);
                 Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:0.##} bytes per object)\n",
                                     totalStringObjectSize - byteArraySize, (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
 
                 Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
                 Console.WriteLine("  {0,15:N0} bytes are ASCII", asciiStringSize);
                 Console.WriteLine("  {0,15:N0} bytes are ISO-8859-1 (Latin-1)", isoStringSize);
-                Console.WriteLine("  {0,15:N0} bytes are Unicode", unicodeStringSize);
+                Console.WriteLine("  {0,15:N0} bytes are Unicode (UTF-16)", unicodeStringSize);
                 Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0})\n", asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize);
 
                 Console.WriteLine("Compression Summary:");
                 Console.WriteLine("  {0,15:N0} bytes Compressed (from Unicode -> ISO-8859-1 (Latin-1))", compressedStringSize);
-                Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode)", uncompressedStringSize);
+                Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
                 Console.WriteLine("Total: {0:N0} bytes, compared to {1:N0} before compression\n", compressedStringSize + uncompressedStringSize, byteArraySize);
             }
         }
@@ -148,9 +169,8 @@ namespace HeapStringAnalyser
 
         private static string LoadCorrectDacForMemoryDump(ClrInfo version)
         {
-            // This is the data needed to request the dac from the symbol server:
-            ModuleInfo dacInfo = version.DacInfo;
             // Location: <TEMP>\symbols\mscordacwks_amd64_amd64_4.0.30319.18444.dll\52717f9a96b000\mscordacwks_amd64_amd64_4.0.30319.18444.dll
+            ModuleInfo dacInfo = version.DacInfo;
             var dacLocation = string.Format(@"{0}\symbols\{1}\{2:x}{3:x}\{4}",
                                             Path.GetTempPath(), 
                                             dacInfo.FileName, 
@@ -229,8 +249,12 @@ namespace HeapStringAnalyser
                                       Size = g.Sum(p => (uint)p.Length)
                                   }))
             {
-                Console.WriteLine("Heap {0,2}: {1,12:n0} bytes", item.Heap, item.Size);
+                Console.WriteLine("Heap {0,2}: {1,12:n0} bytes ({2:N2} MB)", item.Heap, item.Size, item.Size / 1024.0 / 1024.0);
             }
+            Console.WriteLine("--------------------------------------------------------------------");
+            Console.WriteLine("Total (across all heaps): {0:N0} bytes ({1:N2} MB)", 
+                              heap.Segments.Sum(s => (long)s.Length), heap.Segments.Sum(s => (long)s.Length) / 1024.0 / 1024.0);
+            Console.WriteLine("--------------------------------------------------------------------");
             Console.WriteLine();
         }
 
