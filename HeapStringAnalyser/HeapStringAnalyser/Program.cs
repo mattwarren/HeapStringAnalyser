@@ -18,6 +18,7 @@ namespace HeapStringAnalyser
 
         static void Main(string[] args)
         {
+            Console.WriteLine(".NET Memory Dump Heap Analyser - created by Matt Warren - github.com/mattwarren\n");
             if (args.Length < 1)
             {
                 Console.WriteLine("Usage:\n  HeapStringAnalyser.exe <Dump File>\n");
@@ -117,19 +118,25 @@ namespace HeapStringAnalyser
                                   stringObjectCounter, totalStringObjectSize, totalStringObjectSize / 1024.0 / 1024.0);
                 Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes ({1:N2} MB)",
                                   byteArraySize, byteArraySize / 1024.0 / 1024.0);
-                Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:0.##} bytes per object)\n",
-                                    totalStringObjectSize - byteArraySize, (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
+                Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:N2} MB), at {2:0.##} bytes per object\n",
+                                  totalStringObjectSize - byteArraySize, 
+                                  (totalStringObjectSize - byteArraySize) / 1024.0 / 1024.0,
+                                  (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
 
                 Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
                 Console.WriteLine("  {0,15:N0} bytes are ASCII", asciiStringSize);
                 Console.WriteLine("  {0,15:N0} bytes are ISO-8859-1 (Latin-1)", isoStringSize);
                 Console.WriteLine("  {0,15:N0} bytes are Unicode (UTF-16)", unicodeStringSize);
-                Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0})\n", asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize);
+                Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0}{2})\n",
+                                  asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize,
+                                  (asciiStringSize + isoStringSize + unicodeStringSize != byteArraySize) ? " - ERROR" : "");
 
                 Console.WriteLine("Compression Summary:");
                 Console.WriteLine("  {0,15:N0} bytes Compressed (from Unicode -> ISO-8859-1 (Latin-1))", compressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
-                Console.WriteLine("Total: {0:N0} bytes, compared to {1:N0} before compression\n", compressedStringSize + uncompressedStringSize, byteArraySize);
+                Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (one byte field, per \"System.String\" object)", stringObjectCounter);
+                Console.WriteLine("Total: {0:N0} bytes, compared to {1:N0} before compression\n", 
+                                  compressedStringSize + uncompressedStringSize + stringObjectCounter, byteArraySize);
             }
         }
 
@@ -220,7 +227,7 @@ namespace HeapStringAnalyser
 
         private static void PrintGCHeapInfo(ClrHeap heap)
         {
-            Console.WriteLine("\nGC Heap Information");
+            Console.WriteLine("\nGC Heap Information (Segments)");
             Console.WriteLine("--------------------------------------------------------------------");
             Console.WriteLine("{0,12} {1,12} {2,12} {3,12} {4,4} {5}", "Start", "End", "Committed", "Reserved", "Heap", "Type");
             Console.WriteLine("--------------------------------------------------------------------");
@@ -239,7 +246,8 @@ namespace HeapStringAnalyser
             }
             Console.WriteLine("--------------------------------------------------------------------");
 
-            Console.WriteLine();
+            Console.WriteLine("\nGC Heap Information (Heaps)");
+            Console.WriteLine("-----------------------------------------------------------");
             foreach (var item in (from seg in heap.Segments
                                   group seg by seg.ProcessorAffinity into g
                                   orderby g.Key
@@ -251,10 +259,10 @@ namespace HeapStringAnalyser
             {
                 Console.WriteLine("Heap {0,2}: {1,12:n0} bytes ({2:N2} MB)", item.Heap, item.Size, item.Size / 1024.0 / 1024.0);
             }
-            Console.WriteLine("--------------------------------------------------------------------");
+            Console.WriteLine("-----------------------------------------------------------");
             Console.WriteLine("Total (across all heaps): {0:N0} bytes ({1:N2} MB)", 
                               heap.Segments.Sum(s => (long)s.Length), heap.Segments.Sum(s => (long)s.Length) / 1024.0 / 1024.0);
-            Console.WriteLine("--------------------------------------------------------------------");
+            Console.WriteLine("-----------------------------------------------------------");
             Console.WriteLine();
         }
 
