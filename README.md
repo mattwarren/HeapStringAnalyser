@@ -15,6 +15,14 @@ Found CLR Version: v4.0.30319.18444
 
 ...
 
+GC Heap Information (Heaps)
+-----------------------------------------------------------
+Heap  0:    7,119,360 bytes (6.79 MB)
+Heap  1:   34,126,640 bytes (32.55 MB)
+-----------------------------------------------------------
+Total (across all heaps): 41,246,000 bytes (39.34 MB)
+-----------------------------------------------------------
+
 Overall 35,903 "System.String" objects take up 2,717,588 bytes (2.59 MB)
 Of this underlying byte arrays (as Unicode) take up 1,784,110 bytes (1.70 MB)
 Remaining data (object headers, other fields, etc) is 933,478 bytes (0.89 MB), at 26 bytes per object
