@@ -56,8 +56,9 @@ namespace HeapStringAnalyser
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(ex);
+                    Console.WriteLine("\n" + ex);
                     Console.WriteLine("\nEnsure that this program is compliled for the same architecture as the memory dump (i.e. 32-bit or 64-bit)");
+                    return;
                 }
 
                 var heap = runtime.GetHeap();
@@ -72,7 +73,7 @@ namespace HeapStringAnalyser
                 }
 
                 ulong totalStringObjectSize = 0, stringObjectCounter = 0, byteArraySize = 0;
-                ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0;
+                ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0, utf8StringSize = 0;
                 ulong compressedStringSize = 0, uncompressedStringSize = 0;
                 foreach (var obj in heap.EnumerateObjectAddresses())
                 {
@@ -106,7 +107,17 @@ namespace HeapStringAnalyser
                     {
                         isoStringSize += (ulong)rawBytes.Length;
                         compressedStringSize += (ulong)textAsBytes.Length;
+                        var isoString = isoLatin1Encoder.GetString(textAsBytes);
                     }
+                    // UTF-8 and UTF-16 can both support the same range of text/character values ("Code Points"), they just store it in different ways
+                    // From http://stackoverflow.com/questions/4655250/difference-between-utf-8-and-utf-16/4655335#4655335
+                    // "Both UTF-8 and UTF-16 are variable length (multi-byte) encodings.
+                    // However, in UTF-8 a character may occupy a minimum of 8 bits, while in UTF-16 character length starts with 16 bits."
+                    //else if (IsUTF8(text, out textAsBytes))
+                    //{
+                    //    utf8StringSize += (ulong)rawBytes.Length;
+                    //    compressedStringSize += (ulong)textAsBytes.Length;
+                    //}
                     else
                     {
                         unicodeStringSize += (ulong)rawBytes.Length;
@@ -126,6 +137,7 @@ namespace HeapStringAnalyser
                 Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
                 Console.WriteLine("  {0,15:N0} bytes are ASCII", asciiStringSize);
                 Console.WriteLine("  {0,15:N0} bytes are ISO-8859-1 (Latin-1)", isoStringSize);
+                //Console.WriteLine("  {0,15:N0} bytes are UTF-8", utf8StringSize);
                 Console.WriteLine("  {0,15:N0} bytes are Unicode (UTF-16)", unicodeStringSize);
                 Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0}{2})\n",
                                   asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize,
@@ -165,6 +177,21 @@ namespace HeapStringAnalyser
             try
             {
                 textAsBytes = Encoding.Convert(Encoding.Unicode, isoLatin1Encoder, unicodeBytes);
+                return true;
+            }
+            catch (EncoderFallbackException /*efEx*/)
+            {
+                textAsBytes = null;
+                return false;
+            }
+        }
+
+        private static bool IsUTF8(string text, out byte[] textAsBytes)
+        {
+            var unicodeBytes = Encoding.Unicode.GetBytes(text);
+            try
+            {
+                textAsBytes = Encoding.Convert(Encoding.Unicode, Encoding.UTF8, unicodeBytes);
                 return true;
             }
             catch (EncoderFallbackException /*efEx*/)
