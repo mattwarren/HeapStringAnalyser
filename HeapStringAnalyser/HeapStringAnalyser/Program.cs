@@ -144,7 +144,7 @@ namespace HeapStringAnalyser
                                   (asciiStringSize + isoStringSize + unicodeStringSize != byteArraySize) ? " - ERROR" : "");
 
                 Console.WriteLine("Compression Summary:");
-                Console.WriteLine("  {0,15:N0} bytes Compressed (from Unicode -> ISO-8859-1 (Latin-1))", compressedStringSize);
+                Console.WriteLine("  {0,15:N0} bytes Compressed (to ISO-8859-1 (Latin-1))", compressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (one byte field, per \"System.String\" object)", stringObjectCounter);
                 Console.WriteLine("Total: {0:N0} bytes, compared to {1:N0} before compression\n", 
@@ -203,6 +203,14 @@ namespace HeapStringAnalyser
 
         private static string LoadCorrectDacForMemoryDump(ClrInfo version)
         {
+            // First try the main location, i.e.:
+            // C:\Windows\Microsoft.NET\Framework\v4.0.30319\mscordacwks.dll
+            if (version.LocalMatchingDac != null && File.Exists(version.LocalMatchingDac))
+            {
+                Console.WriteLine("\nDac already exists on the local machine at:\n{0}", version.LocalMatchingDac);
+                return version.LocalMatchingDac;
+            }
+
             // Location: <TEMP>\symbols\mscordacwks_amd64_amd64_4.0.30319.18444.dll\52717f9a96b000\mscordacwks_amd64_amd64_4.0.30319.18444.dll
             ModuleInfo dacInfo = version.DacInfo;
             var dacLocation = string.Format(@"{0}\symbols\{1}\{2:x}{3:x}\{4}",
@@ -214,16 +222,17 @@ namespace HeapStringAnalyser
 
             if (File.Exists(dacLocation))
             {
-                Console.WriteLine("\nDac {0} already exists locally at:\n{1}", dacInfo.FileName, dacLocation);
+                Console.WriteLine("\nDac {0} already exists in the local cache at:\n{1}", dacInfo.FileName, dacLocation);
                 return dacLocation;
             }
             else
             {
-                Console.WriteLine("\nUnable to find local copy of the dac, it will now be downloaded from the Microsoft Symbol Server");
+                Console.WriteLine("\nUnable to find copy of the dac on the local machine.");
+                Console.WriteLine("It will now be downloaded from the Microsoft Symbol Server.");
                 Console.WriteLine("Press <ENTER> if you are okay with this, if not you can just type Ctrl-C to exit");
                 Console.ReadLine();
 
-                string downloadLocation = version.TryDownloadDac();
+                string downloadLocation = version.TryDownloadDac(new SymbolNotification());
                 Console.WriteLine("Downloaded a copy of the dac to:\n" + downloadLocation);
                 return downloadLocation;
             }
@@ -322,6 +331,39 @@ namespace HeapStringAnalyser
                                       rawBytes.Length, objSize, objAsHex, text);
                 }
             }
+        }
+    }
+
+    class SymbolNotification : ISymbolNotification
+    {
+        public void DecompressionComplete(string localPath)
+        {
+            Console.WriteLine("DecompressionComplete: " + (localPath ?? "<NULL>"));
+        }
+
+        public void DownloadComplete(string localPath, bool requiresDecompression)
+        {
+            Console.WriteLine("DecompressionComplete: " + (localPath ?? "<NULL>"));
+        }
+
+        public void DownloadProgress(int bytesDownloaded)
+        {
+            Console.WriteLine("DownloadProgress: bytesDownloaded = " + bytesDownloaded);
+        }
+
+        public void FoundSymbolInCache(string localPath)
+        {
+            Console.WriteLine("FoundSymbolInCache: " + (localPath ?? "<NULL>"));
+        }
+
+        public void FoundSymbolOnPath(string url)
+        {
+            Console.WriteLine("FoundSymbolOnPath: " + (url ?? "<NULL>"));
+        }
+
+        public void ProbeFailed(string url)
+        {
+            Console.WriteLine("ProbeFailed: " + (url ?? "<NULL>"));
         }
     }
 }
