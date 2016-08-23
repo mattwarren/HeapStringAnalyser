@@ -50,20 +50,35 @@ namespace HeapStringAnalyser
                 try
                 {
                     if (string.IsNullOrEmpty(dacLocation))
+                    {
+                        Console.WriteLine(dacLocation);
                         runtime = runtimeInfo.CreateRuntime();
+                    }
                     else
+                    {
                         runtime = runtimeInfo.CreateRuntime(dacLocation);
+                    }
+                }
+                catch (InvalidOperationException ex)
+                {
+                    Console.WriteLine("\n" + ex);
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("\nEnsure that this program is compliled for the same architecture as the memory dump (i.e. 32-bit or 64-bit)");
+                    Console.WriteLine(String.Format(".NET Memory Dump Heap Analyser is compiled as {0}-bit\n", Environment.Is64BitProcess ? "64" : "32"));
+                    Console.ResetColor();
+                    return;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("\n" + ex);
-                    Console.WriteLine("\nEnsure that this program is compliled for the same architecture as the memory dump (i.e. 32-bit or 64-bit)");
+                    Console.WriteLine("\nUnable to process the Memory Dump file!?");
                     return;
                 }
 
                 var heap = runtime.GetHeap();
 
                 //PrintMemoryRegionInfo(runtime);
+                //PrintGCHeapInfo(heap, printHeapSegmentInfo: true);
                 PrintGCHeapInfo(heap);
 
                 if (!heap.CanWalkHeap)
@@ -74,6 +89,7 @@ namespace HeapStringAnalyser
 
                 ulong totalStringObjectSize = 0, stringObjectCounter = 0, byteArraySize = 0;
                 ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0, utf8StringSize = 0;
+                ulong asciiStringCount = 0, unicodeStringCount = 0, isoStringCount = 0, utf8StringCount = 0;
                 ulong compressedStringSize = 0, uncompressedStringSize = 0;
                 foreach (var obj in heap.EnumerateObjectAddresses())
                 {
@@ -95,6 +111,8 @@ namespace HeapStringAnalyser
                     if (IsASCII(text, out textAsBytes))
                     {
                         asciiStringSize += (ulong)rawBytes.Length;
+                        asciiStringCount++;
+
                         // ASCII is compressed as ISO-8859-1 (Latin-1) NOT ASCII
                         if (IsIsoLatin1(text, out textAsBytes))
                             compressedStringSize += (ulong)textAsBytes.Length;
@@ -107,7 +125,7 @@ namespace HeapStringAnalyser
                     {
                         isoStringSize += (ulong)rawBytes.Length;
                         compressedStringSize += (ulong)textAsBytes.Length;
-                        var isoString = isoLatin1Encoder.GetString(textAsBytes);
+                        isoStringCount++;
                     }
                     // UTF-8 and UTF-16 can both support the same range of text/character values ("Code Points"), they just store it in different ways
                     // From http://stackoverflow.com/questions/4655250/difference-between-utf-8-and-utf-16/4655335#4655335
@@ -116,11 +134,13 @@ namespace HeapStringAnalyser
                     //else if (IsUTF8(text, out textAsBytes))
                     //{
                     //    utf8StringSize += (ulong)rawBytes.Length;
+                    //    utf8StringCount++;
                     //    compressedStringSize += (ulong)textAsBytes.Length;
                     //}
                     else
                     {
                         unicodeStringSize += (ulong)rawBytes.Length;
+                        unicodeStringCount++;
                         uncompressedStringSize += (ulong)rawBytes.Length;
                     }
                 }
@@ -129,26 +149,34 @@ namespace HeapStringAnalyser
                                   stringObjectCounter, totalStringObjectSize, totalStringObjectSize / 1024.0 / 1024.0);
                 Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes ({1:N2} MB)",
                                   byteArraySize, byteArraySize / 1024.0 / 1024.0);
-                Console.WriteLine("Remaining data (object headers, other fields, etc) is {0:N0} bytes ({1:N2} MB), at {2:0.##} bytes per object\n",
+                Console.WriteLine("Remaining data (object headers, other fields, etc) are {0:N0} bytes ({1:N2} MB), at {2:0.##} bytes per object\n",
                                   totalStringObjectSize - byteArraySize, 
                                   (totalStringObjectSize - byteArraySize) / 1024.0 / 1024.0,
                                   (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
 
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
                 Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
-                Console.WriteLine("  {0,15:N0} bytes are ASCII", asciiStringSize);
-                Console.WriteLine("  {0,15:N0} bytes are ISO-8859-1 (Latin-1)", isoStringSize);
-                //Console.WriteLine("  {0,15:N0} bytes are UTF-8", utf8StringSize);
-                Console.WriteLine("  {0,15:N0} bytes are Unicode (UTF-16)", unicodeStringSize);
+                Console.ResetColor();
+                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ASCII", asciiStringSize, asciiStringCount);
+                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ISO-8859-1 (Latin-1)", isoStringSize, isoStringCount);
+                //Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) are UTF-8", utf8StringSize, utf8StringCount);
+                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as Unicode (UTF-16)", unicodeStringSize, unicodeStringCount);
                 Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0}{2})\n",
                                   asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize,
                                   (asciiStringSize + isoStringSize + unicodeStringSize != byteArraySize) ? " - ERROR" : "");
 
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
                 Console.WriteLine("Compression Summary:");
+                Console.ResetColor();
                 Console.WriteLine("  {0,15:N0} bytes Compressed (to ISO-8859-1 (Latin-1))", compressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (one byte field, per \"System.String\" object)", stringObjectCounter);
-                Console.WriteLine("Total: {0:N0} bytes, compared to {1:N0} before compression\n", 
-                                  compressedStringSize + uncompressedStringSize + stringObjectCounter, byteArraySize);
+                var totalBytesUsed = compressedStringSize + uncompressedStringSize + stringObjectCounter;
+                var totalBytesSaved = byteArraySize - totalBytesUsed;
+                Console.WriteLine("\nTotal Usage:  {0:N0} bytes ({1:N2} MB), compared to {2:N0} ({3:N2} MB) before compression", 
+                                  totalBytesUsed, totalBytesUsed / 1024.0 / 1024.0,
+                                  byteArraySize, byteArraySize / 1024.0 / 1024.0);
+                Console.WriteLine("Total Saving: {0:N0} bytes ({1:N2} MB)\n", totalBytesSaved, totalBytesSaved / 1024.0 / 1024.0);
             }
         }
 
@@ -213,7 +241,7 @@ namespace HeapStringAnalyser
 
             // Location: <TEMP>\symbols\mscordacwks_amd64_amd64_4.0.30319.18444.dll\52717f9a96b000\mscordacwks_amd64_amd64_4.0.30319.18444.dll
             ModuleInfo dacInfo = version.DacInfo;
-            var dacLocation = string.Format(@"{0}\symbols\{1}\{2:x}{3:x}\{4}",
+            var dacLocation = string.Format(@"{0}symbols\{1}\{2:x}{3:x}\{4}",
                                             Path.GetTempPath(), 
                                             dacInfo.FileName, 
                                             dacInfo.TimeStamp, 
@@ -227,9 +255,12 @@ namespace HeapStringAnalyser
             }
             else
             {
-                Console.WriteLine("\nUnable to find copy of the dac on the local machine.");
-                Console.WriteLine("It will now be downloaded from the Microsoft Symbol Server.");
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("\nUnable to find copy of the dac ({0}) on the local machine.", dacInfo);
+                Console.WriteLine("Expected location:\n" + dacLocation);
+                Console.WriteLine("\nIt will now be downloaded from the Microsoft Symbol Server.");
                 Console.WriteLine("Press <ENTER> if you are okay with this, if not you can just type Ctrl-C to exit");
+                Console.ResetColor();
                 Console.ReadLine();
 
                 string downloadLocation = version.TryDownloadDac(new SymbolNotification());
@@ -261,28 +292,35 @@ namespace HeapStringAnalyser
             Console.WriteLine("--------------------------------------------");
         }
 
-        private static void PrintGCHeapInfo(ClrHeap heap)
+        private static void PrintGCHeapInfo(ClrHeap heap, bool printHeapSegmentInfo = false)
         {
-            Console.WriteLine("\nGC Heap Information (Segments)");
-            Console.WriteLine("--------------------------------------------------------------------");
-            Console.WriteLine("{0,12} {1,12} {2,12} {3,12} {4,4} {5}", "Start", "End", "Committed", "Reserved", "Heap", "Type");
-            Console.WriteLine("--------------------------------------------------------------------");
-            foreach (ClrSegment segment in heap.Segments)
+            if (printHeapSegmentInfo)
             {
-                string type;
-                if (segment.IsEphemeral)
-                    type = "Ephemeral";
-                else if (segment.IsLarge)
-                    type = "Large";
-                else
-                    type = "Gen2";
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine("\nGC Heap Segments Information");
+                Console.ResetColor();
+                Console.WriteLine("--------------------------------------------------------------------");
+                Console.WriteLine("{0,12} {1,12} {2,12} {3,12} {4,4} {5}", "Start", "End", "Committed", "Reserved", "Heap", "Type");
+                Console.WriteLine("--------------------------------------------------------------------");
+                foreach (ClrSegment segment in heap.Segments)
+                {
+                    string type;
+                    if (segment.IsEphemeral)
+                        type = "Ephemeral";
+                    else if (segment.IsLarge)
+                        type = "Large";
+                    else
+                        type = "Gen2";
 
-                Console.WriteLine("{0,12:X} {1,12:X} {2,12:X} {3,12:X} {4,4} {5}",
-                                    segment.Start, segment.End, segment.CommittedEnd, segment.ReservedEnd, segment.ProcessorAffinity, type);
+                    Console.WriteLine("{0,12:X} {1,12:X} {2,12:X} {3,12:X} {4,4} {5}",
+                                        segment.Start, segment.End, segment.CommittedEnd, segment.ReservedEnd, segment.ProcessorAffinity, type);
+                }
+                Console.WriteLine("--------------------------------------------------------------------");
             }
-            Console.WriteLine("--------------------------------------------------------------------");
 
-            Console.WriteLine("\nGC Heap Information (Heaps)");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("\nGC Heap Information");
+            Console.ResetColor();
             Console.WriteLine("-----------------------------------------------------------");
             foreach (var item in (from seg in heap.Segments
                                   group seg by seg.ProcessorAffinity into g
