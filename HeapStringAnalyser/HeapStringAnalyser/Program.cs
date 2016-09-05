@@ -18,7 +18,10 @@ namespace HeapStringAnalyser
 
         static void Main(string[] args)
         {
+            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine(".NET Memory Dump Heap Analyser - created by Matt Warren - github.com/mattwarren\n");
+            Console.ResetColor();
+
             if (args.Length < 1)
             {
                 Console.WriteLine("Usage:\n  HeapStringAnalyser.exe <Dump File>\n");
@@ -170,7 +173,7 @@ namespace HeapStringAnalyser
                 Console.ResetColor();
                 Console.WriteLine("  {0,15:N0} bytes Compressed (to ISO-8859-1 (Latin-1))", compressedStringSize);
                 Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
-                Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (one byte field, per \"System.String\" object)", stringObjectCounter);
+                Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (1-byte field, per \"System.String\" object)", stringObjectCounter);
                 var totalBytesUsed = compressedStringSize + uncompressedStringSize + stringObjectCounter;
                 var totalBytesSaved = byteArraySize - totalBytesUsed;
                 Console.WriteLine("\nTotal Usage:  {0:N0} bytes ({1:N2} MB), compared to {2:N0} ({3:N2} MB) before compression", 
