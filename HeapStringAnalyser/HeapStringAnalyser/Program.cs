@@ -46,9 +46,9 @@ namespace HeapStringAnalyser
                 var showGcHeapInfo = args.Any(a => a.ToLowerInvariant() == "--gcinfo" || a.ToLowerInvariant() == "-gcinfo");
                 if (showGcHeapInfo)
                 {
-                    //PrintMemoryRegionInfo(runtime);
-                    //PrintGCHeapInfo(heap, printHeapSegmentInfo: true);
-                    PrintGCHeapInfo(heap);
+                    PrintMemoryRegionInfo(runtime);
+
+                    PrintGCHeapInfo(runtime, heap);
                 }
                 
                 ExamineProcessHeap(runtime, heap, showGcHeapInfo);
@@ -294,11 +294,12 @@ namespace HeapStringAnalyser
             Console.ForegroundColor = ConsoleColor.DarkYellow;
             Console.WriteLine("\nMemory Region Information");
             Console.ResetColor();
-            Console.WriteLine("--------------------------------------------");
-            Console.WriteLine("{0,6} {1,15} {2}", "Count", "Total Size", "Type");
-            Console.WriteLine("--------------------------------------------");
+            var seperator = "------------------------------------------------";
+            Console.WriteLine(seperator);
+            Console.WriteLine("{0,24} {1,4} {2,15}", "Type", "Count", "Total Size (MB)");
+            Console.WriteLine(seperator);
             foreach (var region in (from r in runtime.EnumerateMemoryRegions()
-                                    where r.Type != ClrMemoryRegionType.ReservedGCSegment
+                                    //where r.Type != ClrMemoryRegionType.ReservedGCSegment
                                     group r by r.Type into g
                                     let total = g.Sum(p => (uint)p.Size)
                                     orderby total descending
@@ -309,22 +310,39 @@ namespace HeapStringAnalyser
                                         Type = g.Key
                                     }))
             {
-                Console.WriteLine("{0,6:n0} {1,15:n0} {2}", region.Count, region.TotalSize, region.Type.ToString());
+                Console.WriteLine("{0,24} {1,5} {2,15:N2}", region.Type.ToString(), region.Count, region.TotalSize / 1024.0 / 1024.0);
             }
-            Console.WriteLine("--------------------------------------------");
+            Console.WriteLine(seperator);
         }
 
-        private static void PrintGCHeapInfo(ClrHeap heap, bool printHeapSegmentInfo = false)
+        private static void PrintGCHeapInfo(ClrRuntime runtime, ClrHeap heap)
         {
-            if (printHeapSegmentInfo)
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("\nGC Heap Information - {0}", runtime.ServerGC ? "Server" : "Workstation");
+            Console.ResetColor();
+
+            var seperator = "-----------------------------------------------------------";
+            var heapSegmentInfo = from seg in heap.Segments
+                               group seg by seg.ProcessorAffinity into g
+                               orderby g.Key
+                               select new
+                               {
+                                   Heap = g.Key,
+                                   Size = g.Sum(p => (uint)p.Length)
+                               };
+            foreach (var item in heapSegmentInfo)
             {
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine("\nGC Heap Segments Information");
+                Console.WriteLine(seperator);
+                Console.ForegroundColor = ConsoleColor.DarkGreen;
+                Console.WriteLine("Heap {0,2}: {1,12:N0} bytes ({2:N2} MB) in use", 
+                                  item.Heap, item.Size, item.Size / 1024.0 / 1024.0);
                 Console.ResetColor();
-                Console.WriteLine("--------------------------------------------------------------------");
-                Console.WriteLine("{0,12} {1,12} {2,12} {3,12} {4,4} {5}", "Start", "End", "Committed", "Reserved", "Heap", "Type");
-                Console.WriteLine("--------------------------------------------------------------------");
-                foreach (ClrSegment segment in heap.Segments)
+                Console.WriteLine(seperator);
+                Console.WriteLine("{0,12} {1,12} {2,14} {3,14}", "Type", "Size (MB)", "Committed (MB)", "Reserved (MB)");
+                Console.WriteLine(seperator);
+                var heapSegments = heap.Segments.Where(s => s.ProcessorAffinity == item.Heap)
+                                                .OrderBy(s => s.IsEphemeral ? 1 : 0 + (s.IsLarge ? 3 : 2));
+                foreach (ClrSegment segment in heapSegments)
                 {
                     string type;
                     if (segment.IsEphemeral)
@@ -334,31 +352,18 @@ namespace HeapStringAnalyser
                     else
                         type = "Gen2";
 
-                    Console.WriteLine("{0,12:X} {1,12:X} {2,12:X} {3,12:X} {4,4} {5}",
-                                        segment.Start, segment.End, segment.CommittedEnd, segment.ReservedEnd, segment.ProcessorAffinity, type);
+                    Console.WriteLine("{0,12} {1,12:N2} {2,14:N2} {3,14:N2}", 
+                                      type,                                
+                                      (segment.End - segment.Start) / 1024.0 / 1024.0, // This is the same as segment.Length
+                                      (segment.CommittedEnd - segment.Start) / 1024.0 / 1024.0,
+                                      (segment.ReservedEnd - segment.Start) / 1024.0 / 1024.0);
                 }
-                Console.WriteLine("--------------------------------------------------------------------");
             }
-
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine("\nGC Heap Information");
-            Console.ResetColor();
-            Console.WriteLine("-----------------------------------------------------------");
-            foreach (var item in (from seg in heap.Segments
-                                  group seg by seg.ProcessorAffinity into g
-                                  orderby g.Key
-                                  select new
-                                  {
-                                      Heap = g.Key,
-                                      Size = g.Sum(p => (uint)p.Length)
-                                  }))
-            {
-                Console.WriteLine("Heap {0,2}: {1,12:n0} bytes ({2:N2} MB)", item.Heap, item.Size, item.Size / 1024.0 / 1024.0);
-            }
-            Console.WriteLine("-----------------------------------------------------------");
+            Console.WriteLine(seperator);
             Console.WriteLine("Total (across all heaps): {0:N0} bytes ({1:N2} MB)", 
-                              heap.Segments.Sum(s => (long)s.Length), heap.Segments.Sum(s => (long)s.Length) / 1024.0 / 1024.0);
-            Console.WriteLine("-----------------------------------------------------------");
+                              heap.Segments.Sum(s => (long)s.Length), 
+                              heap.Segments.Sum(s => (long)s.Length) / 1024.0 / 1024.0);
+            Console.WriteLine(seperator);
         }
 
         private static void VerifyStringObjectSize(ClrRuntime runtime, ClrType type, ulong obj, string text)
