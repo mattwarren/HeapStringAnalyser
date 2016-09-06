@@ -28,159 +28,134 @@ namespace HeapStringAnalyser
                 return;
             }
 
-            if (File.Exists(args[0]) == false)
+            var memoryDumpPath = args[0];
+            if (File.Exists(memoryDumpPath) == false)
             {
-                Console.WriteLine("{0} - does not exist!", args[0]);
+                Console.WriteLine("{0} - does not exist!", memoryDumpPath);
                 return;
             }
 
-            ExamineProcessHeap(args);
-        }
-
-        private static void ExamineProcessHeap(string[] args)
-        {
-            using (DataTarget target = DataTarget.LoadCrashDump(args[0]))
+            using (DataTarget target = DataTarget.LoadCrashDump(memoryDumpPath))
             {
-                string dacLocation = null;
-                foreach (ClrInfo version in target.ClrVersions)
-                {
-                    Console.WriteLine("Found CLR Version: " + version.Version.ToString());
-                    dacLocation = LoadCorrectDacForMemoryDump(version);
-                }
-
-                var runtimeInfo = target.ClrVersions[0]; // just using the first runtime
-                ClrRuntime runtime = null;
-                try
-                {
-                    if (string.IsNullOrEmpty(dacLocation))
-                    {
-                        Console.WriteLine(dacLocation);
-                        runtime = runtimeInfo.CreateRuntime();
-                    }
-                    else
-                    {
-                        runtime = runtimeInfo.CreateRuntime(dacLocation);
-                    }
-                }
-                catch (InvalidOperationException ex)
-                {
-                    Console.WriteLine("\n" + ex);
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("\nEnsure that this program is compliled for the same architecture as the memory dump (i.e. 32-bit or 64-bit)");
-                    Console.WriteLine(String.Format(".NET Memory Dump Heap Analyser is compiled as {0}-bit\n", Environment.Is64BitProcess ? "64" : "32"));
-                    Console.ResetColor();
+                ClrRuntime runtime = CreateRuntime(target);
+                if (runtime == null)
                     return;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("\n" + ex);
-                    Console.WriteLine("\nUnable to process the Memory Dump file!?");
-                    return;
-                }
 
                 var heap = runtime.GetHeap();
 
-                //PrintMemoryRegionInfo(runtime);
-                //PrintGCHeapInfo(heap, printHeapSegmentInfo: true);
-                PrintGCHeapInfo(heap);
-
-                if (!heap.CanWalkHeap)
+                var showGcHeapInfo = args.Any(a => a.ToLowerInvariant() == "--gcinfo" || a.ToLowerInvariant() == "-gcinfo");
+                if (showGcHeapInfo)
                 {
-                    Console.WriteLine("Cannot walk the heap!");
-                    return;
+                    //PrintMemoryRegionInfo(runtime);
+                    //PrintGCHeapInfo(heap, printHeapSegmentInfo: true);
+                    PrintGCHeapInfo(heap);
                 }
-
-                ulong totalStringObjectSize = 0, stringObjectCounter = 0, byteArraySize = 0;
-                ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0, utf8StringSize = 0;
-                ulong asciiStringCount = 0, unicodeStringCount = 0, isoStringCount = 0, utf8StringCount = 0;
-                ulong compressedStringSize = 0, uncompressedStringSize = 0;
-                foreach (var obj in heap.EnumerateObjectAddresses())
-                {
-                    ClrType type = heap.GetObjectType(obj);
-                    // If heap corruption, continue past this object. Or if it's NOT a String we also ignore it
-                    if (type == null || type.IsString == false)
-                        continue;
-
-                    stringObjectCounter++;
-                    var text = (string)type.GetValue(obj);
-                    var rawBytes = Encoding.Unicode.GetBytes(text);
-                    totalStringObjectSize += type.GetSize(obj);
-                    byteArraySize += (ulong)rawBytes.Length;
-
-                    VerifyStringObjectSize(runtime, type, obj, text);
-
-                    // Try each encoding in order, so we find the most-compact encoding that the text would fit in
-                    byte[] textAsBytes = null;
-                    if (IsASCII(text, out textAsBytes))
-                    {
-                        asciiStringSize += (ulong)rawBytes.Length;
-                        asciiStringCount++;
-
-                        // ASCII is compressed as ISO-8859-1 (Latin-1) NOT ASCII
-                        if (IsIsoLatin1(text, out textAsBytes))
-                            compressedStringSize += (ulong)textAsBytes.Length;
-                        else
-                            Console.WriteLine("ERROR: \"{0}\" is ASCII but can't be encoded as ISO-8859-1 (Latin-1)", text);
-                    }
-                    // From http://stackoverflow.com/questions/7048745/what-is-the-difference-between-utf-8-and-iso-8859-1
-                    // "ISO 8859-1 is a single-byte encoding that can represent the first 256 Unicode characters"
-                    else if (IsIsoLatin1(text, out textAsBytes))
-                    {
-                        isoStringSize += (ulong)rawBytes.Length;
-                        compressedStringSize += (ulong)textAsBytes.Length;
-                        isoStringCount++;
-                    }
-                    // UTF-8 and UTF-16 can both support the same range of text/character values ("Code Points"), they just store it in different ways
-                    // From http://stackoverflow.com/questions/4655250/difference-between-utf-8-and-utf-16/4655335#4655335
-                    // "Both UTF-8 and UTF-16 are variable length (multi-byte) encodings.
-                    // However, in UTF-8 a character may occupy a minimum of 8 bits, while in UTF-16 character length starts with 16 bits."
-                    //else if (IsUTF8(text, out textAsBytes))
-                    //{
-                    //    utf8StringSize += (ulong)rawBytes.Length;
-                    //    utf8StringCount++;
-                    //    compressedStringSize += (ulong)textAsBytes.Length;
-                    //}
-                    else
-                    {
-                        unicodeStringSize += (ulong)rawBytes.Length;
-                        unicodeStringCount++;
-                        uncompressedStringSize += (ulong)rawBytes.Length;
-                    }
-                }
-
-                Console.WriteLine("Overall {0:N0} \"System.String\" objects take up {1:N0} bytes ({2:N2} MB)",
-                                  stringObjectCounter, totalStringObjectSize, totalStringObjectSize / 1024.0 / 1024.0);
-                Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes ({1:N2} MB)",
-                                  byteArraySize, byteArraySize / 1024.0 / 1024.0);
-                Console.WriteLine("Remaining data (object headers, other fields, etc) are {0:N0} bytes ({1:N2} MB), at {2:0.##} bytes per object\n",
-                                  totalStringObjectSize - byteArraySize, 
-                                  (totalStringObjectSize - byteArraySize) / 1024.0 / 1024.0,
-                                  (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
-
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
-                Console.ResetColor();
-                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ASCII", asciiStringSize, asciiStringCount);
-                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ISO-8859-1 (Latin-1)", isoStringSize, isoStringCount);
-                //Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) are UTF-8", utf8StringSize, utf8StringCount);
-                Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as Unicode (UTF-16)", unicodeStringSize, unicodeStringCount);
-                Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0}{2})\n",
-                                  asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize,
-                                  (asciiStringSize + isoStringSize + unicodeStringSize != byteArraySize) ? " - ERROR" : "");
-
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine("Compression Summary:");
-                Console.ResetColor();
-                Console.WriteLine("  {0,15:N0} bytes Compressed (to ISO-8859-1 (Latin-1))", compressedStringSize);
-                Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode/UTF-16)", uncompressedStringSize);
-                Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (1-byte field, per \"System.String\" object)", stringObjectCounter);
-                var totalBytesUsed = compressedStringSize + uncompressedStringSize + stringObjectCounter;
-                var totalBytesSaved = byteArraySize - totalBytesUsed;
-                Console.WriteLine("\nTotal Usage:  {0:N0} bytes ({1:N2} MB), compared to {2:N0} ({3:N2} MB) before compression", 
-                                  totalBytesUsed, totalBytesUsed / 1024.0 / 1024.0,
-                                  byteArraySize, byteArraySize / 1024.0 / 1024.0);
-                Console.WriteLine("Total Saving: {0:N0} bytes ({1:N2} MB)\n", totalBytesSaved, totalBytesSaved / 1024.0 / 1024.0);
+                
+                ExamineProcessHeap(runtime, heap, showGcHeapInfo);
             }
+        }
+
+        private static void ExamineProcessHeap(ClrRuntime runtime, ClrHeap heap, bool showGcHeapInfo)
+        {            
+            if (!heap.CanWalkHeap)
+            {
+                Console.WriteLine("Cannot walk the heap!");
+                return;
+            }
+
+            ulong totalStringObjectSize = 0, stringObjectCounter = 0, byteArraySize = 0;
+            ulong asciiStringSize = 0, unicodeStringSize = 0, isoStringSize = 0; //, utf8StringSize = 0;
+            ulong asciiStringCount = 0, unicodeStringCount = 0, isoStringCount = 0; //, utf8StringCount = 0;
+            ulong compressedStringSize = 0, uncompressedStringSize = 0;
+            foreach (var obj in heap.EnumerateObjectAddresses())
+            {
+                ClrType type = heap.GetObjectType(obj);
+                // If heap corruption, continue past this object. Or if it's NOT a String we also ignore it
+                if (type == null || type.IsString == false)
+                    continue;
+
+                stringObjectCounter++;
+                var text = (string)type.GetValue(obj);
+                var rawBytes = Encoding.Unicode.GetBytes(text);
+                totalStringObjectSize += type.GetSize(obj);
+                byteArraySize += (ulong)rawBytes.Length;
+
+                VerifyStringObjectSize(runtime, type, obj, text);
+
+                // Try each encoding in order, so we find the most-compact encoding that the text would fit in
+                byte[] textAsBytes = null;
+                if (IsASCII(text, out textAsBytes))
+                {
+                    asciiStringSize += (ulong)rawBytes.Length;
+                    asciiStringCount++;
+
+                    // ASCII is compressed as ISO-8859-1 (Latin-1) NOT ASCII
+                    if (IsIsoLatin1(text, out textAsBytes))
+                        compressedStringSize += (ulong)textAsBytes.Length;
+                    else
+                        Console.WriteLine("ERROR: \"{0}\" is ASCII but can't be encoded as ISO-8859-1 (Latin-1)", text);
+                }
+                // From http://stackoverflow.com/questions/7048745/what-is-the-difference-between-utf-8-and-iso-8859-1
+                // "ISO 8859-1 is a single-byte encoding that can represent the first 256 Unicode characters"
+                else if (IsIsoLatin1(text, out textAsBytes))
+                {
+                    isoStringSize += (ulong)rawBytes.Length;
+                    isoStringCount++;
+                    compressedStringSize += (ulong)textAsBytes.Length;
+                }
+                // UTF-8 and UTF-16 can both support the same range of text/character values ("Code Points"), they just store it in different ways
+                // From http://stackoverflow.com/questions/4655250/difference-between-utf-8-and-utf-16/4655335#4655335
+                // "Both UTF-8 and UTF-16 are variable length (multi-byte) encodings.
+                // However, in UTF-8 a character may occupy a minimum of 8 bits, while in UTF-16 character length starts with 16 bits."
+                //else if (IsUTF8(text, out textAsBytes))
+                //{
+                //    utf8StringSize += (ulong)rawBytes.Length;
+                //    utf8StringCount++;
+                //    compressedStringSize += (ulong)textAsBytes.Length;
+                //}
+                else
+                {
+                    unicodeStringSize += (ulong)rawBytes.Length;
+                    unicodeStringCount++;
+                    uncompressedStringSize += (ulong)rawBytes.Length;
+                }
+            }
+
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("\n\"System.String\" memory usage info");
+            Console.ResetColor();
+            Console.WriteLine("Overall {0:N0} \"System.String\" objects take up {1:N0} bytes ({2:N2} MB)",
+                                stringObjectCounter, totalStringObjectSize, totalStringObjectSize / 1024.0 / 1024.0);
+            Console.WriteLine("Of this underlying byte arrays (as Unicode) take up {0:N0} bytes ({1:N2} MB)",
+                                byteArraySize, byteArraySize / 1024.0 / 1024.0);
+            Console.WriteLine("Remaining data (object headers, other fields, etc) are {0:N0} bytes ({1:N2} MB), at {2:0.##} bytes per object\n",
+                                totalStringObjectSize - byteArraySize,
+                                (totalStringObjectSize - byteArraySize) / 1024.0 / 1024.0,
+                                (totalStringObjectSize - byteArraySize) / (double)stringObjectCounter);
+
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("Actual Encoding that the \"System.String\" could be stored as (with corresponding data size)");
+            Console.ResetColor();
+            Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ASCII", asciiStringSize, asciiStringCount);
+            Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as ISO-8859-1 (Latin-1)", isoStringSize, isoStringCount);
+            //Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) are UTF-8", utf8StringSize, utf8StringCount);
+            Console.WriteLine("  {0,15:N0} bytes ({1,8:N0} strings) as Unicode", unicodeStringSize, unicodeStringCount);
+            Console.WriteLine("Total: {0:N0} bytes (expected: {1:N0}{2})\n",
+                                asciiStringSize + isoStringSize + unicodeStringSize, byteArraySize,
+                                (asciiStringSize + isoStringSize + unicodeStringSize != byteArraySize) ? " - ERROR" : "");
+
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("Compression Summary:");
+            Console.ResetColor();
+            Console.WriteLine("  {0,15:N0} bytes Compressed (to ISO-8859-1 (Latin-1))", compressedStringSize);
+            Console.WriteLine("  {0,15:N0} bytes Uncompressed (as Unicode)", uncompressedStringSize);
+            Console.WriteLine("  {0,15:N0} bytes EXTRA to enable compression (1-byte field, per \"System.String\" object)", stringObjectCounter);
+            var totalBytesUsed = compressedStringSize + uncompressedStringSize + stringObjectCounter;
+            var totalBytesSaved = byteArraySize - totalBytesUsed;
+            Console.WriteLine("\nTotal Usage:  {0:N0} bytes ({1:N2} MB), compared to {2:N0} ({3:N2} MB) before compression",
+                                totalBytesUsed, totalBytesUsed / 1024.0 / 1024.0,
+                                byteArraySize, byteArraySize / 1024.0 / 1024.0);
+            Console.WriteLine("Total Saving: {0:N0} bytes ({1:N2} MB)\n", totalBytesSaved, totalBytesSaved / 1024.0 / 1024.0);            
         }
 
         // By default the encoder just replaces the invalid characters, so force it to throw an exception
@@ -232,6 +207,48 @@ namespace HeapStringAnalyser
             }
         }
 
+        private static ClrRuntime CreateRuntime(DataTarget target)
+        {
+            string dacLocation = null;
+            foreach (ClrInfo version in target.ClrVersions)
+            {
+                Console.WriteLine("Found CLR Version: " + version.Version.ToString());
+                dacLocation = LoadCorrectDacForMemoryDump(version);
+            }
+
+            var runtimeInfo = target.ClrVersions[0]; // just using the first runtime
+            ClrRuntime runtime = null;
+            try
+            {
+                if (string.IsNullOrEmpty(dacLocation))
+                {
+                    Console.WriteLine(dacLocation);
+                    runtime = runtimeInfo.CreateRuntime();
+                }
+                else
+                {
+                    runtime = runtimeInfo.CreateRuntime(dacLocation);
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.WriteLine("\n" + ex);
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("\nEnsure that this program is compliled for the same architecture as the memory dump (i.e. 32-bit or 64-bit)");
+                Console.WriteLine(String.Format(".NET Memory Dump Heap Analyser is compiled as {0}-bit\n", Environment.Is64BitProcess ? "64" : "32"));
+                Console.ResetColor();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("\n" + ex);
+                Console.WriteLine("\nUnable to process the Memory Dump file!?");
+                return null;
+            }
+
+            return runtime;
+        }
+
         private static string LoadCorrectDacForMemoryDump(ClrInfo version)
         {
             // First try the main location, i.e.:
@@ -274,7 +291,9 @@ namespace HeapStringAnalyser
 
         private static void PrintMemoryRegionInfo(ClrRuntime runtime)
         {
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
             Console.WriteLine("\nMemory Region Information");
+            Console.ResetColor();
             Console.WriteLine("--------------------------------------------");
             Console.WriteLine("{0,6} {1,15} {2}", "Count", "Total Size", "Type");
             Console.WriteLine("--------------------------------------------");
@@ -340,7 +359,6 @@ namespace HeapStringAnalyser
             Console.WriteLine("Total (across all heaps): {0:N0} bytes ({1:N2} MB)", 
                               heap.Segments.Sum(s => (long)s.Length), heap.Segments.Sum(s => (long)s.Length) / 1024.0 / 1024.0);
             Console.WriteLine("-----------------------------------------------------------");
-            Console.WriteLine();
         }
 
         private static void VerifyStringObjectSize(ClrRuntime runtime, ClrType type, ulong obj, string text)
